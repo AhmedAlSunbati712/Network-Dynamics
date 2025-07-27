@@ -40,6 +40,8 @@ class Subject:
         return self.regressors
     def get_fbrain_image(self):
         return self.fbrain_image
+    def get_behavior(self):
+        return self.behavior
     
     # ========== Setters ========== #
     def set_ID(self, ID):
@@ -315,7 +317,7 @@ class Subject:
             plt.ylabel('Accuracy')
             plt.tight_layout()
             plt.show()
-
+        correct_recalls = self.get_behavior()["correct_recalls"]
         list_A_forget_accuracies = []
         list_B_forget_accuracies = []
 
@@ -323,7 +325,7 @@ class Subject:
         list_B_remember_accuracies = []
         
         # A df that returns the recall accuracy for each list
-        accuracies = quail.analyze(self.egg, analysis='accuracy').get_data() 
+        
         pres_features = self.egg.get_pres_features()
         
         # Iterate over all the lists and add the recall accuracy for each run to the corresponding list
@@ -337,19 +339,19 @@ class Subject:
                     match cue_type:
                         case 'forget':
                             # Asked to recall list A after a forget cue
-                            list_A_forget_accuracies.append(accuracies.iloc[run, 0])
+                            list_A_forget_accuracies.append(correct_recalls[run]/16)
                         case 'remember':
                             # Asked to recall list A after a remember cue
-                            list_A_remember_accuracies.append(accuracies.iloc[run, 0])
+                            list_A_remember_accuracies.append(correct_recalls[run]/16)
                             
                 case 'B':
                     match cue_type:
                         case 'forget':
                             # Asked to recall list B after a forget cue
-                            list_B_forget_accuracies.append(accuracies.iloc[run, 0])
+                            list_B_forget_accuracies.append(correct_recalls[run]/16)
                         case 'remember':
                             # Asked to recall list B after a remember cue
-                            list_B_remember_accuracies.append(accuracies.iloc[run, 0])
+                            list_B_remember_accuracies.append(correct_recalls[run]/16)
         
         # Averaging out the accuracies for the remember cues
         list_A_remember_avg_accuracy = get_average_accuracy(list_A_remember_accuracies)

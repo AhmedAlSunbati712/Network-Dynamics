@@ -168,7 +168,7 @@ def accuracy_by_cue_across_subjects(subjects_list):
 
     # Averaging out recall accuracy across subjects for forget cues across the two lists
     list_A_forget_across_avg = get_average_accuracy(list_A_forget_subj_accuracies)
-    list_B_forget_across_avg = get_average_accuracy(list_A_forget_subj_accuracies)
+    list_B_forget_across_avg = get_average_accuracy(list_B_forget_subj_accuracies)
 
     plot_cue_histogram(list_A_remember_across_avg, list_B_remember_across_avg, "Remember")
     plot_cue_histogram(list_A_forget_across_avg, list_B_forget_across_avg, "Forget")
