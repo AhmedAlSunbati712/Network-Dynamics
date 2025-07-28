@@ -10,7 +10,7 @@ import scipy as sp
 from glob import glob as lsdir
 from mat73 import loadmat
 
-dropbox_link = "https://www.dropbox.com/scl/fi/t44o5k8c0gaazyngprorf/data.zip?rlkey=iofmmyn2sawfefusesvod3nr3&st=m1qj319q&dl=1"
+dropbox_link = "https://www.dropbox.com/scl/fo/246zhmzuof9085ls4oy8n/AJFJOiD1lS-Jh5ZZp0mgyaQ?rlkey=4rb9rbjx8g9kumj6fyorf2dkg&dl=1"
 download_path = "./data.zip"
 targeted_dir = "./data/"
 
