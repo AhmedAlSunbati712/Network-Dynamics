@@ -14,7 +14,7 @@ dropbox_link = "https://www.dropbox.com/scl/fo/246zhmzuof9085ls4oy8n/AJFJOiD1lS-
 download_path = "./data.zip"
 targeted_dir = "./data/"
 
-EXCLUDE = ['072413_DFFR_0', '112313_DFFR_0']
+EXCLUDE = ['072413_DFFR_0', '112313_DFFR_0', '073113_DFFR_0']
 
 def download_data(download_link, download_path):
     """
@@ -66,16 +66,38 @@ def extract_zip_file(file_path, targeted_dir, exclude_files = ['__MACOSX/']):
     except zipfile.LargeZipFile:
         print(f"Error: ZIP file requires ZIP64 support but it's not enabled.")
 
+def load_regressors(behavior_dir):
+    """
+    Dsecription:
+        Loads regressors _regs_results.mat files for each subject from the 'regressors'
+        subdirectory within the given behavior directory. Excludes files listed in the
+        EXCLUDE list. Each file is listed as a dictionary using 'loadmat', and stored in
+        a dictionary keyed by the filename.
+
+    ========= Parameters =========
+    @param behavior_dir: Path to the root subject data directory. Must contain a 
+    'regressors/' subdirectory with *_regs_results.mat files.
+
+    ========= Returns =========
+    @returns: A dictionary where the keys are subject identifiers and values are the contents
+    of the corresponding loaded .mat files.
+    """
+    return {os.path.split(r)[1][:-len('_regs_results.mat')]: 
+               sp.io.loadmat(r)['all_regressors'][:-1, :] 
+               for r in lsdir(os.path.join(behavior_dir, 'regressors', '*_regs_results.mat'))
+               if os.path.split(r)[1][:-len('_regs_results.mat')] not in EXCLUDE}
+    
+
 def load_behavior(behavior_dir):
     """
     Description:
-        Loads behavioral .mat files for each subject-run pair from the 'regressors' 
+        Loads behavioral .mat files for each subject from the 'regressors' 
         subdirectory within the given behavior directory. Excludes files listed in the
         EXCLUDE list. Each file is loaded as a dictionary using `loadmat`, and stored in
-        a dictionary keyed by the filename (minus the `.mat` extension).
+        a dictionary keyed by the filename.
 
     ========== Parameters ==========
-    @param behavior_dir (str): Path to the root subject data directory. Must contain a 
+    @param behavior_dir: Path to the root subject data directory. Must contain a 
     'regressors/' subdirectory with *_0.mat and *_1.mat files.
 
     ========== Returns ==========

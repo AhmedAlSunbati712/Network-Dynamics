@@ -29,6 +29,7 @@ class Subject:
         self.id = ID
         self.regressors = regressors
         self.behavior = behavior
+        
         self.fbrain_image = fbrain_image
         self.activation_windows_dict = None
         self.egg = None
@@ -60,18 +61,19 @@ class Subject:
             Useful for getting a quick visual overview of the regressor patterns.
         """
         reg_matrix = self.regressors
-        ID = self.ID
+        ID = self.id
         
         plt.figure(figsize=(12, 6))
         sns.set_style("whitegrid")
 
         ax = sns.heatmap(
             reg_matrix,
-            cmap='YlGn',        
-            cbar_kws={'label': 'Intensity'},  
-            linewidths=0.3,       
+            cmap='YlGn',
+            cbar_kws={'label': 'Intensity'},
             linecolor='white',
-            square=False          
+            square=False,
+            vmin=0,
+            vmax=1  # assuming binary regressors
         )
 
         plt.title(f'Regressors for {ID}', fontsize=22, pad=20)
