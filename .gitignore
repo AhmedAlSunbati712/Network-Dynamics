@@ -1,8 +1,6 @@
 __pycache__/
 .DS_Store
-data/DFFR/
-data/DFFR_gz/
+data/DFFR/*.nii
+data/DFFR_gz/*.nii.gz
 data/DFFR_gz.zip
-data/masked_data
-data/isfc
-data/isfc_figures
+data/masked_data/*.pkl
