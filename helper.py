@@ -110,6 +110,8 @@ def load_behavior(behavior_dir):
             if os.path.split(r)[1][:-4] not in EXCLUDE}
     return behavior
 
+
+
 def accuracy_by_cue_across_subjects(subjects_list):
     """
     Description:

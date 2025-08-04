@@ -8,7 +8,7 @@ import quail as quail
 
 
 class Subject:
-    def __init__(self, ID, regressors, behavior, fbrain_image=None):
+    def __init__(self, ID, regressors, behavior, nii_file=None):
         """
         Description:
             Defines a class that holds each subject data from the experiment along
@@ -30,7 +30,8 @@ class Subject:
         self.regressors = regressors
         self.behavior = behavior
         
-        self.fbrain_image = fbrain_image
+        self.nii_file = nii_file
+        self.nii_file_masked = None
         self.activation_windows_dict = None
         self.egg = None
 
@@ -144,9 +145,9 @@ class Subject:
             self.activation_windows_dict = activation_windows_dict
         
         # Array that stores the start indices of all active intervals for the given regressor key
-        start = np.array([t1 for (t1, t2) in activation_windows_dict[str(regressor_key)]])
+        start = np.array([t1 for (t1, t2) in activation_windows_dict[regressor_key]])
         # Array that stores the end indices of all active intervals for the given regressor key
-        end = np.array([t2 for (t1, t2) in activation_windows_dict[str(regressor_key)]])
+        end = np.array([t2 for (t1, t2) in activation_windows_dict[regressor_key]])
         return [start, end]
 
 
@@ -165,15 +166,14 @@ class Subject:
             - 'remember': numpy array of adjusted end times for "Remember" cues.
             - 'forget': numpy array of adjusted end times for "Forget" cues.
         """
-        activation_windows_dict = self.activation_windows_dict
         cues = {
             "List 1": 0,
             "List 2, Remember": 1,
             "List 2, Forget": 2
         }
-        _, end_L1 = self.regressor_windows_boundaries(activation_windows_dict, cues["List 1"])
-        start_L2_R, _ = self.regressor_windows_boundaries(activation_windows_dict, cues["List 2, Remember"])
-        start_L2_F, _ = self.regressor_windows_boundaries(activation_windows_dict, cues["List 2, Forget"])
+        _, end_L1 = self.regressor_windows_boundaries(cues["List 1"])
+        start_L2_R, _ = self.regressor_windows_boundaries(cues["List 2, Remember"])
+        start_L2_F, _ = self.regressor_windows_boundaries(cues["List 2, Forget"])
 
         end_L1_R = end_L1[np.where(cdist(np.atleast_2d(end_L1).T, np.atleast_2d(start_L2_R).T) < 10)[0]] + cue_offset
         end_L1_F = end_L1[np.where(cdist(np.atleast_2d(end_L1).T, np.atleast_2d(start_L2_F).T) < 10)[0]] + cue_offset

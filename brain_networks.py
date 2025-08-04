@@ -3,13 +3,16 @@ import nilearn as nl
 import os
 import pandas as pd
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 from nltools.data import Brain_Data
 from nltools.mask import expand_mask
 from nltools.plotting import plot_glass_brain
-from glob import glob
+from glob import glob as lsdir
 from matplotlib.colors import ListedColormap
 import pickle
 from tqdm import tqdm
+import timecorr as tc
 
 
 def build_parcellation_key(key_path):
@@ -79,55 +82,211 @@ def plot_parcellation(nifti_image, cmap, output_path=None, display=True):
         plot_glass_brain(nifti_image, cmap=cmap, display_mode='lyrz', output_file=output_path)
     if display:
         plot_glass_brain(nifti_image, cmap=cmap, display_mode='lyrz')
+        
 
-def get_valid_nii_files(dffr_dir, exclude):
-    """
-    Description:
-        Returns a list of valid NIfTI files from a directory, excluding files based on subject ID.
+def load_fmri_images(subjects_list, fmri_data_path):
+    nii_files = []
+    for fmri_file in os.listdir(fmri_data_path):
+        nii_files.append(os.path.join(fmri_data_path, fmri_file))
+        for subject in subjects_list:
+            if subject.get_ID() == fmri_file[:-len(".nii.gz")]:
+                subject.nii_file = os.path.join(fmri_data_path, fmri_file)
+    return nii_files
 
-    ========== Parameters ==========
-    @param dffr_dir: Directory containing .nii.gz files.
-    @param exclude: List of subject IDs to exclude.
-
-    ========== Returns ==========
-    @returns List of filtered .nii.gz file paths.
-    """
-    all_files = glob(os.path.join(dffr_dir, '*.nii.gz'))
-    return [f for f in all_files if nii_fname2subj(f) not in exclude]
-
-def extract_and_cache_roi_data(nii_files, mask, scratch_dir):
+def extract_and_cache_roi_data(subjects_list, mask, scratch_dir):
     """
     Description:
         Extract ROI time series from each NIfTI file using the given mask,
         cache each result as a pickle, and return all results in a dictionary.
 
-    Parameters:
-        nii_files (list): List of .nii.gz file paths
-        mask (list): List of ROI masks (e.g., from nltools.expand_mask)
-        scratch_dir (str): Directory to save the .pkl files
+    ============ Parameters ============
+        @param subjects_list (list of Subject objects): List of subject objects
+        @param mask (list): List of ROI masks (from nltools.expand_mask)
+        @param scratch_dir (str): Directory to save the masked images .pkl files
 
-    Returns:
-        data (dict): Dictionary mapping subject ID to extracted ROI time series (numpy array)
+    ============= Returns =============
+        @returns data (dict): Dictionary mapping subject ID to extracted ROI time series (numpy array)
     """
     data = {}
-
-    for n in tqdm(nii_files, desc="Extracting ROI data"):
-        subj_id = nii_fname2subj(n)
-        pickle_path = os.path.join(scratch_dir, f'{subj_id}_{len(mask)}_parcels.pkl')
+    original_corrmat = []
+    reduced_corrmat = []
+    for subject in tqdm(subjects_list, desc="Extracting ROI data"):
+        subj_id = subject.get_ID().split("_")[0]
+        subj_day_index = subject.nii_file[-len("x.nii.gz")]
+        pickle_path = os.path.join(scratch_dir, f'{subj_id}_{subj_day_index}_{len(mask)}_parcels.pkl')
 
         if os.path.exists(pickle_path):
             with open(pickle_path, 'rb') as f:
-                x = pickle.load(f)
+                masked_img, original_corrmat, reduced_corrmat = pickle.load(f)
         else:
-            img = Brain_Data(n)
-            x = apply_mask_to_img(n, mask, img=img)
+            unmasked_img = Brain_Data(subject.nii_file)
+            masked_img = apply_mask_to_img(subject.nii_file, mask, unmasked_img)
 
             with open(pickle_path, 'wb') as f:
-                pickle.dump(x, f)
+                pickle.dump([masked_img, original_corrmat, reduced_corrmat], f)
 
-        data[subj_id] = x
+        data[subj_id + "_DFFR_" + subj_day_index] = masked_img
+        subject.masked_img = masked_img
 
     return data
+
+def event_triggered_average(data, event_times, before=25, after=25):
+    """
+    Description:
+        Compute the event-triggered average (ETA) of time series data. For each event time,
+        the function extracts a window of data centered around the event, spanning 
+        `before` timepoints before and `after` timepoints after. The output is the average 
+        across all such windows, while handling edge cases where the event window 
+        would extend beyond the bounds of the data by inserting NaNs.
+
+        If `data` or `event_times` is a dictionary, the function operates recursively, 
+        computing ETAs for each key.
+
+    ============ Parameters ============
+        @param data (np.ndarray or dict): 
+            Time series data of shape (T, D), where T is number of timepoints and D is number of voxels.
+            Can also be a dictionary mapping subject IDs to data arrays.
+
+        @param event_times (list or dict): 
+            List of integer timepoints indicating event onsets. Can also be a dictionary
+            mapping subject IDs to event time lists.
+
+        @param before (int): 
+            Number of timepoints to include before each event. Default is 25.
+
+        @param after (int): 
+            Number of timepoints to include after each event. Default is 25.
+
+    ============= Returns =============
+        @returns remember_etas (list): 
+            List of averaged event-triggered responses for "remember" trials (per subject).
+
+        @returns forget_etas (list): 
+            List of averaged event-triggered responses for "forget" trials (per subject).
+    """
+    if type(data) is dict:
+        return {k: event_triggered_average(v, event_times[k], before=before, after=after) for k, v in data.items()}
+
+    if type(event_times) is dict:
+        return {k: event_triggered_average(data, v, before=before, after=after) for k, v in event_times.items()}
+    
+    etas = np.multiply(np.nan, np.zeros([before + after + 1, data.shape[1], len(event_times)]))
+    for i, t in enumerate(event_times):
+        start_time = t - before - 1
+        end_time = t + after
+        
+        if start_time >= 0:
+            start_ind = 0
+        else:
+            start_ind = np.abs(start_time)
+            start_time = 0
+        
+        if end_time <= data.shape[0]:
+            end_ind = before + after + 1
+        else:
+            end_ind = end_time - data.shape[0]
+            end_time = data.shape[0]
+        
+        start_ind, end_ind, start_time, end_time = int(start_ind), int(end_ind), int(start_time), int(end_time)
+        etas[start_ind:end_ind, :, i] = data[start_time:end_time, :]
+
+    return np.mean(etas, axis=2)
+
+
+def compute_networks(mask, var, scratch_dir, remember_etas, forget_etas, weights_function, weights_param, combine):
+    """
+    Description:
+        Compute inter-subject functional connectivity matrices for "remember" and "forget" conditions
+        using event-triggered averages (ETAs) and a time correlation function. Results are cached to avoid
+        recomputation, and the final output is returned as full square connectivity matrices.
+
+    ============ Parameters ============
+        @param mask (list): 
+            List of parcel masks (e.g., voxel groupings or region indices), used for labeling/cache naming.
+
+        @param var (dict): 
+            ??? example: {"var": 5}
+
+        @param scratch_dir (str): 
+            Path to directory for saving and loading cached ISFC results.
+
+        @param remember_etas (list of np.ndarray): 
+            List of event-triggered average time series for "remember" trials, one array per subject.
+
+        @param forget_etas (list of np.ndarray): 
+            List of event-triggered average time series for "forget" trials, one array per subject.
+
+        @param weights_function (callable): 
+            Function to compute temporal weights for time correlation.
+
+        @param weights_param (float or dict): 
+            Parameter(s) passed to the weights function.
+
+        @param combine (str): 
+            Method for combining individual subject correlations.
+
+    ============= Returns =============
+        @returns remember_matrix (np.ndarray): 
+            ISFC matrix (parcel-by-parcel) for "remember" condition.
+
+        @returns forget_matrix (np.ndarray): 
+            ISFC matrix (parcel-by-parcel) for "forget" condition.
+    """
+    file_name = os.path.join(scratch_dir, f'isfc_{len(mask)}_parcels_T{T}_var{var}.pkl')
+    if os.path.exists(file_name):
+        with open(file_name, 'rb') as f:
+            remember_isfc, forget_isfc = pickle.load(f)
+    else:
+        remember_isfc = tc.timecorr(remember_etas, weights_function=weights_function, weights_param=weights_param, combine=combine)
+        forget_isfc = tc.timecorr(forget_etas, weights_function=weights_function, weights_param=weights_param, combine=combine)
+
+        with open(file_name, "wb") as f:
+            pickle.dump([remember_isfc, forget_isfc], f)
+    return tc.vec2mat(remember_isfc), tc.vec2mat(forget_isfc)
+
+def plot_isfc_networks(remember_isfc, forget_isfc, T, fig_dir):
+    """
+    Description:
+        Plot inter-subject functional connectivity (ISFC) matrices for both "remember" and "forget" conditions
+        across multiple timepoints. The function generates side-by-side heatmaps of ISFC matrices at evenly spaced
+        time lags, highlighting temporal dynamics in connectivity patterns. The output is saved as a single figure.
+
+    ============ Parameters ============
+        @param remember_isfc (np.ndarray): 
+            3D array of ISFC matrices for the "remember" condition. Shape: [n_parcels, n_parcels, T].
+
+        @param forget_isfc (np.ndarray): 
+            3D array of ISFC matrices for the "forget" condition. Shape: [n_parcels, n_parcels, T].
+
+        @param T (int): 
+            Number of timepoints or temporal windows over which ISFC matrices are computed.
+
+        @param fig_dir (str): 
+            Path to directory where the output figure (`isfc.png`) will be saved.
+
+    ============= Returns =============
+        @returns None
+            The function saves the plotted figure as 'isfc.png' in the specified directory.
+    """
+    n = 11
+    fig, ax = plt.subplots(2, n, figsize=(2 * n + 1, 4), sharex=True, sharey=True)
+
+    for i, t in enumerate(np.round(np.linspace(-(T - 1) / 4, (T - 1) / 4, n))):
+        sns.heatmap(remember_isfc[:, :, i], ax=ax[0, i], vmin=-0.5, vmax=0.5, cmap='RdBu_r', cbar=False)
+        sns.heatmap(forget_isfc[:, :, i], ax=ax[1, i], vmin=-0.5, vmax=0.5, cmap='RdBu_r', cbar=False)
+        ax[0, i].set_title(f'TR = {int(t)}', fontsize=14)
+
+        if i == 0:
+            ax[0, i].set_ylabel('Remember', fontsize=14)
+            ax[1, i].set_ylabel('Forget', fontsize=14)
+        ax[1, i].set_xlabel('Time (samples)', fontsize=14)
+
+        ax[0, i].set_xticks([])
+        ax[0, i].set_yticks([])
+
+    plt.tight_layout()
+
+    fig.savefig(os.path.join(fig_dir, 'isfc.png'), bbox_inches='tight')
 
 # <---------------- Helper functions ---------------> #
 
