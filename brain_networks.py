@@ -450,8 +450,6 @@ def dynamic_ISFC(data, windowsize=0):
 
     isfc_mat[np.where(np.isnan(isfc_mat))] = 0
     return isfc_mat
-
-
 # <---------------- Helper functions ---------------> #
 
 def read_parcellation_file(path):

@@ -14,22 +14,27 @@ from mat73 import loadmat
 import nibabel as nib
 from nilearn.input_data import NiftiMasker
 
-dropbox_link = "https://www.dropbox.com/scl/fo/246zhmzuof9085ls4oy8n/AJFJOiD1lS-Jh5ZZp0mgyaQ?rlkey=4rb9rbjx8g9kumj6fyorf2dkg&dl=1"
+dropbox_link = "https://www.dropbox.com/scl/fi/lv51jal8owg5unv9qkzn5/DFFR_gz.zip?rlkey=0mpnmntpaqh070qfbhdcrq66p&st=ktttkfwd&dl=1"
 download_path = "./data.zip"
 targeted_dir = "./data/"
 
 EXCLUDE = ['072413_DFFR_0', '112313_DFFR_0', '073113_DFFR_0']
 
-def download_data(download_link, download_path):
+def download_data(download_path, download_link=dropbox_link):
     """
     Description:
-    Downloads a file from the specified URL and saves it to the given directory.
+    Downloads a file from the specified URL and saves it to the given directory,
+    but only if the file does not already exist.
     ====== Parameters ======
     @param download_link: The URL to download the file from.
-    @param download_dir: The path to which to save the data.
+    @param download_path: The path to which to save the data.
     ====== Returns ======
     @return: None. Prints status messages.
     """
+    if os.path.exists(download_path):
+        print(f"File already exists at {download_path}. Skipping download.")
+        return
+
     print(f"Downloading from Dropbox...\nURL: {download_link}")
 
     try:
