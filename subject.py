@@ -31,7 +31,8 @@ class Subject:
         self.behavior = behavior
         
         self.nii_file = nii_file
-        self.nii_file_masked = None
+        self.Y = None
+        self.R = None
         self.activation_windows_dict = None
         self.egg = None
 

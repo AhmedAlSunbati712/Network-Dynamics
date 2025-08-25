@@ -6,9 +6,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import numpy as np
+from scipy.spatial.distance import pdist, cdist, squareform
+import pickle
 import scipy as sp
 from glob import glob as lsdir
 from mat73 import loadmat
+import nibabel as nib
+from nilearn.input_data import NiftiMasker
 
 dropbox_link = "https://www.dropbox.com/scl/fo/246zhmzuof9085ls4oy8n/AJFJOiD1lS-Jh5ZZp0mgyaQ?rlkey=4rb9rbjx8g9kumj6fyorf2dkg&dl=1"
 download_path = "./data.zip"
@@ -264,3 +268,178 @@ def spc_by_list_across_subjects(subjects_list, cue_type, plot='y'):
     if lists_B: B_array = np.vstack(lists_B)
     if (plot == 'y'): plot_spc(A_array, B_array)
     return A_array, B_array
+
+def nii2cmu_all(subjects_list, mask_file):
+    cmu_data = []
+    for subject in subjects_list:
+        nifti_file = subject.nii_file
+        cmu_saved_path = f"data/cmuData/{subject.get_ID()}_cmu.pkl"
+        if (os.path.exists(cmu_saved_path)):
+            with open(cmu_saved_path, "rb") as f:
+                Y, R = pickle.load(f)
+        else:
+            Y, R = nifti_to_cmu_format(nifti_file)
+            with open(cmu_saved_path, "rb") as f:
+                pickle.dump((Y, R), f)
+        subject_cmu_data = {'R': R, 'Y': Y}
+        cmu_data.append(subject_cmu_data)
+        print(f'Successfully loaded subject {subject.get_ID()}')
+    return cmu_data
+
+def initialize_htfa_params(
+        K=30,
+        max_global_iter=15,
+        max_local_iter=30,
+        voxel_ratio=0.7,
+        tr_ratio=0.7,
+        max_voxel_scale=None,
+        max_tr_scale=None,
+        verbose=True
+        ):
+    params = {
+        'K': K,
+        'max_global_iter': max_global_iter,
+        'max_local_iter': max_local_iter,
+        'voxel_ratio': voxel_ratio,
+        'tr_ratio': tr_ratio,
+        'max_voxel_scale': max_voxel_scale,
+        'max_tr_scale': max_tr_scale,
+        'verbose': verbose,
+    }
+    return params
+
+def params2str(params):
+    param2abb = {
+        'K': 'K',
+        'max_global_iter': 'MGIter',
+        'max_local_iter': 'MLIter',
+        'voxel_ratio': 'vRatio',
+        'tr_ratio': 'trRatio',
+        'max_voxel_scale': 'MVScale',
+        'max_tr_scale': 'MTRScale',
+        'verbose': 'verbose'
+
+    }
+    res = ""
+    for key in params.keys():
+        abbreviation = param2abb[key]
+        value = params[key]
+
+        res += abbreviation + "-" + str(value) + '_'
+    return res
+        
+
+def cmu2htfa(cmu_data):
+    htfa_data = [{'R': s['R'], 'Z': s['Y'].T} for s in cmu_data]
+    print(f'Converted cmu data into htfa format succesfully!')
+    return htfa_data
+
+def get_cmu_data(subjects_list):
+    data = []
+    for subject in subjects_list:
+        data.append({'Y': subject.Y, 'R': subject.R})
+    return data
+
+def get_centers_and_widths(parcels_fname):
+    Y, R = nifti_to_cmu_format(parcels_fname)
+    Y = Y.astype(int)
+    centers = np.zeros((Y.max() - Y.min() + 1, 3))
+    widths = np.zeros(Y.max() - Y.min() + 1)
+
+    for i in np.unique(Y):
+        mask = (Y == i).ravel()
+        centers[i - 1] = np.mean(R[mask, :], axis=0)
+        widths[i - 1] = np.mean(cdist(R[mask, :], centers[i - 1].reshape(1, -1)))
+    
+    return centers, widths
+def nifti_to_cmu_format(nifti_file, mask_file=None):
+    """
+    Description:
+    Converts a NIfTI fMRI file into CMU format, applying a brain mask to remove background voxels.
+    Outputs:
+      - Y: (timepoints, brain_voxels) data matrix from the masked fMRI data.
+      - R: (brain_voxels, 3) voxel coordinates in real space (mm), matching columns of Y.
+
+    =========== Parameters ===========
+    @param nifti_file: str
+        Path to the NIfTI (.nii or .nii.gz) file.
+    @param mask_file: str or None
+        Optional path to a mask NIfTI file. If None, mask is computed from data.
+
+    =========== Returns ===========
+    @returns Y: numpy.ndarray
+        Shape (num_timepoints, num_masked_voxels), masked fMRI data matrix.
+    @returns R: numpy.ndarray
+        Shape (num_masked_voxels, 3), real-world coordinates (mm) of masked voxels.
+    """
+
+    # Load NIfTI
+    img = nib.load(nifti_file)
+    S = img.get_sform()
+
+    # Create mask (background strategy unless mask file provided)
+    masker = NiftiMasker(mask_strategy='background')
+    if mask_file is None:
+        masker.fit(nifti_file)
+    else:
+        masker.fit(mask_file)
+
+    # Apply mask to get Y (timepoints x masked_voxels)
+    Y = np.float32(masker.transform(nifti_file)).copy()
+
+    # Get the mask image data as boolean array
+    mask_data = masker.mask_img_.get_fdata().astype(bool)
+
+    # Get voxel indices inside the mask
+    voxel_indices = np.array(np.nonzero(mask_data)).T  # shape (num_voxels, 3), coords in (x, y, z) order
+
+    # Convert voxel coords to real space (mm)
+    R = nib.affines.apply_affine(S, voxel_indices)
+
+    return Y, R
+
+def create_group_mask(nii_files, output_file="group_mask.nii.gz", method="intersection"):
+    """
+    Description: 
+    Create a group brain mask from a list of NIfTI files.
+
+    =========== Parameters ===========
+
+    @param nii_files : list of str
+        Paths to subject NIfTI files.
+    @param output_file : str
+        Filename to save the group mask NIfTI.
+    @param method : str
+        'intersection' (default) includes voxels present in all subjects.
+        'union' includes voxels present in any subject.
+
+    =========== Returns ===========
+    @returns group_mask_img : nibabel.Nifti1Image
+        The group mask NIfTI image.
+    @returns output_file : str
+        Path to the saved group mask file.
+    """
+    masks = []
+
+    # Step 1: create individual masks
+    for f in nii_files:
+        img = nib.load(f)
+        data = img.get_fdata()
+        # mask = voxels with non-zero values across time (axis=3)
+        mask = np.any(data != 0, axis=3)
+        masks.append(mask)
+
+    # Step 2: combine masks
+    if method == "intersection":
+        group_mask = np.logical_and.reduce(masks)
+    elif method == "union":
+        group_mask = np.logical_or.reduce(masks)
+    else:
+        raise ValueError("method must be 'intersection' or 'union'")
+
+    # Step 3: save the group mask
+    group_mask_img = nib.Nifti1Image(group_mask.astype(np.uint8), affine=img.affine)
+    nib.save(group_mask_img, output_file)
+    print(f"Group mask saved to {output_file} with shape {group_mask.shape}")
+
+    return group_mask_img, output_file

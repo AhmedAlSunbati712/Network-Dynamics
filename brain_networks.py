@@ -1,18 +1,24 @@
-import nibabel as nib
-import nilearn as nl
 import os
 import pandas as pd
 import numpy as np
 import seaborn as sns
+#from scipy import spatial as sd
+import scipy.spatial.distance as sd
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+from matplotlib import animation
+from matplotlib.colors import ListedColormap
 from nltools.data import Brain_Data
 from nltools.mask import expand_mask
 from nltools.plotting import plot_glass_brain
+from nilearn import plotting as niplot
+import nibabel as nib
+import nilearn as nl
 from glob import glob as lsdir
-from matplotlib.colors import ListedColormap
 import pickle
 from tqdm import tqdm
 import timecorr as tc
+
 
 
 def build_parcellation_key(key_path):
@@ -118,6 +124,7 @@ def extract_and_cache_roi_data(subjects_list, mask, scratch_dir):
         if os.path.exists(pickle_path):
             with open(pickle_path, 'rb') as f:
                 masked_img, original_corrmat, reduced_corrmat = pickle.load(f)
+                subject.masked_data = masked_img
         else:
             unmasked_img = Brain_Data(subject.nii_file)
             masked_img = apply_mask_to_img(subject.nii_file, mask, unmasked_img)
@@ -126,7 +133,7 @@ def extract_and_cache_roi_data(subjects_list, mask, scratch_dir):
                 pickle.dump([masked_img, original_corrmat, reduced_corrmat], f)
 
         data[subj_id + "_DFFR_" + subj_day_index] = masked_img
-        subject.masked_img = masked_img
+        subject.Y = masked_img
 
     return data
 
@@ -193,7 +200,7 @@ def event_triggered_average(data, event_times, before=25, after=25):
     return np.mean(etas, axis=2)
 
 
-def compute_networks(mask, var, scratch_dir, remember_etas, forget_etas, weights_function, weights_param, combine):
+def compute_networks(mask, var, scratch_dir, remember_etas, forget_etas, weights_function, weights_param, combine, T):
     """
     Description:
         Compute inter-subject functional connectivity matrices for "remember" and "forget" conditions
@@ -287,6 +294,163 @@ def plot_isfc_networks(remember_isfc, forget_isfc, T, fig_dir):
     plt.tight_layout()
 
     fig.savefig(os.path.join(fig_dir, 'isfc.png'), bbox_inches='tight')
+
+
+
+def animate_connectome(hubs, connectomes, figsdir, animation_size_limit, force_refresh=False):
+    """
+    Description:
+    Creates an animation of connectome visualizations over time, saving individual frames
+    as PNG images and compiling them into a matplotlib animation.
+
+    ============== Parameters =============
+    @param hubs: 
+        Coordinates of hub nodes in the connectome (n_nodes x 3).
+    @param connectomes: 
+        Time-series of connectome matrices (n_timepoints x n_connections).
+    @param figsdir:
+        Path to directory where frame images will be saved.
+    @param force_refresh:
+        If True, regenerates all frames even if they already exist.
+
+    ============== Returns ==========
+    @return ani:
+        Animation object containing the connectome visualization sequence.
+    """
+
+    def get_frame(t, fname):
+        """Generate and save a single connectome frame if it doesn't exist or if force_refresh=True."""
+        if force_refresh or not os.path.exists(fname):
+            niplot.plot_connectome(
+                sd.squareform(connectomes[t, :]),
+                hubs,
+                node_color='k',
+                edge_threshold='75%',
+                output_file=fname
+            )
+
+    def update(frame):
+        """Update function for FuncAnimation that loads and displays a frame image."""
+        img = plt.imread(fnames[frame])
+        im.set_array(img)
+        return [im]
+
+    # Set animation embedding limit (in MB)
+    mpl.rcParams['animation.embed_limit'] = animation_size_limit
+
+    # Ensure figure directory exists
+    if not os.path.isdir(figsdir):
+        os.makedirs(figsdir)
+
+    # Generate all frames
+    timepoints = np.arange(connectomes.shape[0])
+    fnames = [os.path.join(figsdir, f"{t}.png") for t in timepoints]
+    list(map(get_frame, timepoints, fnames))
+
+    # Build animation
+    fig, ax = plt.subplots()
+    ax.axis("off")
+    im = ax.imshow(plt.imread(fnames[0]))
+    ani = animation.FuncAnimation(
+        fig, update, frames=len(fnames), interval=50, blit=True
+    )
+
+    plt.close(fig)
+    return ani
+
+def dynamic_connectome(W, n):
+    """
+    Description:
+    Computes a dynamic connectome over sliding windows using correlation distance.
+    If n > 0, the connectome is computed for each sliding window of size n.
+    If n <= 0, the connectome is computed across the entire time series.
+
+    ============== Parameters =============
+    @param W: (T x K)
+        Input time series data where T = number of timepoints and K = number of nodes.
+    @param n:
+        Window size. If n > 0, sliding window length. If n <= 0, use the full time series.
+
+    ============== Returns ==========
+    @return connectome:
+        Dynamic connectome array. Shape is:
+          - (1, K*(K-1)/2) if n <= 0
+          - (T - n + 1, K*(K-1)/2) if n > 0
+        Each row is the upper-triangular vectorized connectome at that time/window.
+    """
+    T, K = W.shape
+
+    if n <= 0:
+        # Compute connectome using full time series
+        connectome = np.array([1 - sd.pdist(W.T, 'correlation')])
+    else:
+        connectome = np.zeros((T - n + 1, int((K ** 2 - K) / 2)))
+        for t in range(T - n + 1):
+            window = W[t:(t+n), :].T  # (K x n) for this window
+            connectome[t, :] = 1 - sd.pdist(window, 'correlation')
+
+    return connectome
+
+def dynamic_ISFC(data, windowsize=0):
+    """
+    Description:
+    Compute the dynamic inter-subject functional connectivity (ISFC) matrix using a sliding window 
+    across multiple time series datasets. The method is based on the approach described in 
+    http://www.nature.com/articles/ncomms12141.
+
+    =========== Parameters ========
+    @param data: 
+        A list of matrices, each with dimensions [number of observations × number of features].
+    @param windowsize: 
+        The number of observations to include in each sliding window. 
+        Set to 0 (default) to use all timepoints.
+
+    ========== Returns ========
+    @return isfc_mat: 
+        A matrix of shape [number of windows × number of feature-pairs] representing the 
+        dynamic ISFC values across sliding windows.
+    """
+
+    def rows(x): return x.shape[0]
+    def cols(x): return x.shape[1]
+    def r2z(r): return 0.5 * (np.log(1 + r) - np.log(1 - r))
+    def z2r(z): return (np.exp(2 * z) - 1) / (np.exp(2 * z) + 1)
+
+    def vectorize(m):
+        np.fill_diagonal(m, 0)
+        return sd.squareform(m)
+
+    assert len(data) > 1
+
+    ns = list(map(rows, data))
+    vs = list(map(cols, data))
+
+    n = np.min(ns)
+    if windowsize == 0:
+        windowsize = n
+
+    assert len(np.unique(vs)) == 1
+    v = vs[0]
+
+    isfc_mat = np.zeros([n - windowsize + 1, int((v ** 2 - v) / 2)])
+    for n in range(0, n - windowsize + 1):
+        next_inds = range(n, n + windowsize)
+        for i in range(len(data)):
+            mean_other_data = np.zeros([len(next_inds), v])
+            for j in range(len(data)):
+                if i == j:
+                    continue
+                mean_other_data += data[j][next_inds, :]
+            mean_other_data /= (len(data) - 1)
+            next_corrs = np.array(
+                r2z(1 - sd.cdist(data[i][next_inds, :].T, mean_other_data.T, 'correlation'))
+            )
+            isfc_mat[n, :] += vectorize(next_corrs + next_corrs.T)
+        isfc_mat[n, :] = z2r(isfc_mat[n, :] / (2 * len(data)))
+
+    isfc_mat[np.where(np.isnan(isfc_mat))] = 0
+    return isfc_mat
+
 
 # <---------------- Helper functions ---------------> #
 
